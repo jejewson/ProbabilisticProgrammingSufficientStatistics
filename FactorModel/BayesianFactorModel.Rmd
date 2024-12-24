@@ -1,0 +1,658 @@
+---
+title: "Bayesian Factor Analysis"
+author: "Jack Jewson"
+date: "01 Oct 2024"
+output: html_document
+---
+
+Taken from https://rfarouni.github.io/assets/projects/BayesianFactorAnalysis/BayesianFactorAnalysis.html
+
+## Preamble {.tabset}
+
+### Working directory
+
++ Change this to be the directory that the stan files are saved in 
+
+```{r setwd, include=TRUE,echo=TRUE, eval=TRUE,cache=TRUE}
+
+my_dir <- "C:/Users/jjew0003/Documents/BarcelonaProjects/SufficientStatistics/BFA"
+
+
+```
+
+### Packages
+
+Loading the required packages.
+
+```{r packages, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+library(rstan)
+rstan_options(auto_write = TRUE)
+
+library(MASS)
+
+library(microbenchmark)
+
+library(ggplot2)
+library(ggpubr)
+```
+
+### stan
+
+```{r stan , include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+setwd(my_dir)
+
+BayesianFactorAnalysis_Vectorised_stan = stan_model("BayesianFactorAnalysis_vectorised.stan")
+BayesianFactorAnalysis_SuffStat_stan = stan_model("BayesianFactorAnalysis_SuffStat.stan")
+BayesianFactorAnalysis_SuffStat_Woodbury_stan = stan_model("BayesianFactorAnalysis_SuffStat_Woodbury.stan")
+
+
+```
+
+# Data Simulation 1
+
+```{r data_simulation, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+
+set.seed(42)
+D <- 3
+P <- 10 
+N <- 100
+
+
+Psi <- diag(c(0.2079, 0.19, 0.1525, 0.20, 0.36, 0.1875, 0.1875, 1.00, 0.27, 0.27))
+l1 <- c(0.99, 0.00, 0.25, 0.00, 0.80, 0.00, 0.50, 0.00, 0.00, 0.00)
+l2 <- c(0.00, 0.90, 0.25, 0.40, 0.00, 0.50, 0.00, 0.00, -0.30, -0.30)
+l3 <-  c(0.00, 0.00, 0.85, 0.80, 0.00, 0.75, 0.75, 0.00, 0.80, 0.80)
+L <- cbind(l1,l2,l3) # the loading matrix
+# Needs to have upper triangle of 0
+
+Theta <- mvrnorm(N, rep(0,D), diag(rep(1,D))) # sample factor scores
+Epsilon <- mvrnorm(N, rep(0,P), Psi) # sample error vector
+Y <- Theta%*%t(L) + Epsilon# generate observable data
+
+
+```
+
+## Vectorised
+
+
+```{r BFA_Vectorised1, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+warmup <- 1000
+iterations <- 5000
+
+BFA_Vectorised_data <- list(P=P, N=N, Y=Y, D=D)
+
+
+BFA_Vectorised_sampling <- rstan::sampling(BayesianFactorAnalysis_Vectorised_stan, BFA_Vectorised_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123)
+
+BFA_Vectorised_params <- extract(BFA_Vectorised_sampling)
+
+
+
+```
+
+
+## With sufficient Statistics
+
+
+```{r BFA_SuffStat1, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+warmup <- 1000
+iterations <- 5000
+
+BFA_SuffStat_data <- list(P=P, N=N, Y=Y, D=D)
+
+
+BFA_SuffStat_sampling <- rstan::sampling(BayesianFactorAnalysis_SuffStat_stan, BFA_SuffStat_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123)
+
+BFA_SuffStat_params <- extract(BFA_SuffStat_sampling)
+
+
+
+```
+
+
+## Sufficient Statistics + Woodbury
+
+
+```{r BFA_SuffStat_Woodbury1, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+warmup <- 1000
+iterations <- 5000
+
+BFA_SuffStat_Woodbury_data <- list(P=P, N=N, Y=Y, D=D)
+
+
+BFA_SuffStat_Woodbury_sampling  <- rstan::sampling(BayesianFactorAnalysis_SuffStat_Woodbury_stan, BFA_SuffStat_Woodbury_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123)
+
+BFA_SuffStat_Woodbury_params <- extract(BFA_SuffStat_Woodbury_sampling)
+
+BFA_SuffStat_Woodbury_sampling_params <- rstan::get_sampler_params(BFA_SuffStat_Woodbury_sampling)
+
+colMeans(BFA_SuffStat_Woodbury_sampling_params[[1]])
+
+
+```
+
+
+```{r BFA_SuffStat_Woodbury1_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+apply(BFA_SuffStat_Woodbury_params$L, c(2, 3), mean)
+apply(BFA_SuffStat_params$L, c(2, 3), mean)
+apply(BFA_Vectorised_params$L, c(2, 3), mean)
+L
+
+
+apply(BFA_SuffStat_Woodbury_params$psi, c(2), mean)
+apply(BFA_SuffStat_params$psi, c(2), mean)
+apply(BFA_Vectorised_params$psi, c(2), mean)
+diag(Psi)
+```
+
+```{r BFA_SuffStat_Woodbury1_plot, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+for(k in 1:D){
+  for(j in (k+1):P){
+    plot(density(BFA_Vectorised_params$L[,j, k]), xlab = paste0("L_", j, k), ylab = "Density", lwd = 3)
+    lines(density(BFA_SuffStat_params$L[,j, k]), col = "darkgray", lwd = 3)
+    lines(density(BFA_SuffStat_Woodbury_params$L[,j, k]), col = "lightgray", lwd = 3)
+    abline(v = L[j, k], lwd = 3, lty = 2, col = "red")
+  }
+}
+
+
+for(j in 1:P){
+  plot(density(BFA_Vectorised_params$psi[,j]), xlab = paste0("psi_", j, j), ylab = "Density", lwd = 3)
+  lines(density(BFA_SuffStat_params$psi[,j]), col = "darkgray", lwd = 3)
+  lines(density(BFA_SuffStat_Woodbury_params$psi[,j]), col = "lightgray", lwd = 3)
+  abline(v = diag(Psi)[j], lwd = 3, lty = 2, col = "red")
+}
+
+```
+
+```{r BFA_SuffStat_Woodbury1_plot_tikz, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE, fig.height = 3, fig.width = 5, dev = "tikz"}
+#par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+#par(mgp = c(2.15, 1, 0))
+#par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25, cex.legend = 1.25)
+par(mar = c(4.2, 4.75, 0.5, 0.5)) # bottom, left, top, right
+par(mgp = c(3, 1.1, 0))
+par(cex.lab = 2.5, cex.axis = 2.5, cex.main = 2.5, cex.legend = 2.5)
+
+for(k in 1:D){
+  for(j in (k+1):P){
+    plot(density(BFA_Vectorised_params$L[,j, k]), col = "lightgray", xlab = paste0("$L_{", j, k,"}$"), ylab = "Density", lwd = 5, main = "")#, main = paste0("Factor model $n = 100$ $p = 10$ $d = 3$"))
+    lines(density(BFA_SuffStat_params$L[,j, k]), col = "black", lwd = 5, lty = 2)
+    lines(density(BFA_SuffStat_Woodbury_params$L[,j, k]), col = "darkgray", lwd = 5, lty = 3)
+    #abline(v = L[j, k], lwd = 3, lty = 2, col = "red")
+    if(k == 1 & j == 2){
+      legend("topleft", c("suff-stat", "Wood", "vect"), col = c("black", "darkgrey", "lightgrey"), lwd = rep(5, 5), lty = c(2, 3, 1), bty = "n", cex = 1.75)
+  }
+  }
+}
+
+
+for(j in 1:P){
+  plot(density(BFA_Vectorised_params$psi[,j]), col = "lightgrey", xlab = paste0("$\\psi_{", j, j,"}$"), ylab = "Density", lwd = 5, main = "")#, main = paste0("Factor model $n = 100$ $p = 10$ $d = 3$"))
+  lines(density(BFA_SuffStat_params$psi[,j]), col = "black", lwd = 5, lty = 2)
+  lines(density(BFA_SuffStat_Woodbury_params$psi[,j]), col = "darkgray", lwd = 5, lty = 3)
+  #abline(v = diag(Psi)[j], lwd = 3, lty = 2, col = "red")
+}
+
+```
+
+
+## microbench comparison - n100, P10, D3
+
+### Simulating Data
+
+```{r mbm_sim_data_n100_p10_d3, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+set.seed(42)
+D <- 3
+P <- 10 
+N <- 100
+
+
+Psi <- diag(c(0.2079, 0.19, 0.1525, 0.20, 0.36, 0.1875, 0.1875, 1.00, 0.27, 0.27))
+l1 <- c(0.99, 0.00, 0.25, 0.00, 0.80, 0.00, 0.50, 0.00, 0.00, 0.00)
+l2 <- c(0.00, 0.90, 0.25, 0.40, 0.00, 0.50, 0.00, 0.00, -0.30, -0.30)
+l3 <-  c(0.00, 0.00, 0.85, 0.80, 0.00, 0.75, 0.75, 0.00, 0.80, 0.80)
+L <- cbind(l1,l2,l3) # the loading matrix
+# Needs to have upper triangle of 0
+
+Theta <- mvrnorm(N, rep(0,D), diag(rep(1,D))) # sample factor scores
+Epsilon <- mvrnorm(N, rep(0,P), Psi) # sample error vector
+Y <- Theta%*%t(L) + Epsilon# generate observable data
+
+
+```
+
+
+```{r mbm_BFA_stan_n100_p10_d3, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BFA_Vectorised_data <- list(P=P, N=N, Y=Y, D=D)
+BFA_SuffStat_data <- list(P=P, N=N, Y=Y, D=D)
+BFA_SuffStat_Woodbury_data <- list(P=P, N=N, Y=Y, D=D)
+
+BFA_mbm_n100_p10_d3 <- microbenchmark(
+Vectorised = rstan::sampling(BayesianFactorAnalysis_Vectorised_stan, BFA_Vectorised_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0),
+SuffStat = rstan::sampling(BayesianFactorAnalysis_SuffStat_stan, BFA_SuffStat_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0),
+SuffStat_Woodbury = rstan::sampling(BayesianFactorAnalysis_SuffStat_Woodbury_stan, BFA_SuffStat_Woodbury_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0), 
+times = 10, unit = "seconds"
+)
+
+```
+
+```{r mbm_BFA_stan_n100_p10_d3_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BFA_mbm_n100_p10_d3
+
+```
+
+## microbench comparison - n500, P10, D3
+
+### Simulating Data
+
+```{r mbm_sim_data_n500_p10_d3, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+set.seed(42)
+D <- 3
+P <- 10 
+N <- 500
+
+
+Psi <- diag(c(0.2079, 0.19, 0.1525, 0.20, 0.36, 0.1875, 0.1875, 1.00, 0.27, 0.27))
+l1 <- c(0.99, 0.00, 0.25, 0.00, 0.80, 0.00, 0.50, 0.00, 0.00, 0.00)
+l2 <- c(0.00, 0.90, 0.25, 0.40, 0.00, 0.50, 0.00, 0.00, -0.30, -0.30)
+l3 <-  c(0.00, 0.00, 0.85, 0.80, 0.00, 0.75, 0.75, 0.00, 0.80, 0.80)
+L <- cbind(l1,l2,l3) # the loading matrix
+# Needs to have upper triangle of 0
+
+Theta <- mvrnorm(N, rep(0,D), diag(rep(1,D))) # sample factor scores
+Epsilon <- mvrnorm(N, rep(0,P), Psi) # sample error vector
+Y <- Theta%*%t(L) + Epsilon# generate observable data
+
+
+```
+
+
+```{r mbm_BFA_stan_n500_p10_d3, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BFA_Vectorised_data <- list(P=P, N=N, Y=Y, D=D)
+BFA_SuffStat_data <- list(P=P, N=N, Y=Y, D=D)
+BFA_SuffStat_Woodbury_data <- list(P=P, N=N, Y=Y, D=D)
+
+BFA_mbm_n500_p10_d3 <- microbenchmark(
+Vectorised = rstan::sampling(BayesianFactorAnalysis_Vectorised_stan, BFA_Vectorised_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0),
+SuffStat = rstan::sampling(BayesianFactorAnalysis_SuffStat_stan, BFA_SuffStat_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0),
+SuffStat_Woodbury = rstan::sampling(BayesianFactorAnalysis_SuffStat_Woodbury_stan, BFA_SuffStat_Woodbury_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0), 
+times = 10, unit = "seconds"
+)
+
+```
+
+```{r mbm_BFA_stan_n500_p10_d3_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BFA_mbm_n500_p10_d3
+
+```
+
+## microbench comparison - n1000, P10, D3
+
+### Simulating Data
+
+```{r mbm_sim_data_n1000_p10_d3, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+set.seed(42)
+D <- 3
+P <- 10 
+N <- 1000
+
+
+Psi <- diag(c(0.2079, 0.19, 0.1525, 0.20, 0.36, 0.1875, 0.1875, 1.00, 0.27, 0.27))
+l1 <- c(0.99, 0.00, 0.25, 0.00, 0.80, 0.00, 0.50, 0.00, 0.00, 0.00)
+l2 <- c(0.00, 0.90, 0.25, 0.40, 0.00, 0.50, 0.00, 0.00, -0.30, -0.30)
+l3 <-  c(0.00, 0.00, 0.85, 0.80, 0.00, 0.75, 0.75, 0.00, 0.80, 0.80)
+L <- cbind(l1,l2,l3) # the loading matrix
+# Needs to have upper triangle of 0
+
+Theta <- mvrnorm(N, rep(0,D), diag(rep(1,D))) # sample factor scores
+Epsilon <- mvrnorm(N, rep(0,P), Psi) # sample error vector
+Y <- Theta%*%t(L) + Epsilon# generate observable data
+
+
+```
+
+
+```{r mbm_BFA_stan_n1000_p10_d3, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BFA_Vectorised_data <- list(P=P, N=N, Y=Y, D=D)
+BFA_SuffStat_data <- list(P=P, N=N, Y=Y, D=D)
+BFA_SuffStat_Woodbury_data <- list(P=P, N=N, Y=Y, D=D)
+
+BFA_mbm_n1000_p10_d3 <- microbenchmark(
+Vectorised = rstan::sampling(BayesianFactorAnalysis_Vectorised_stan, BFA_Vectorised_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0),
+SuffStat = rstan::sampling(BayesianFactorAnalysis_SuffStat_stan, BFA_SuffStat_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0),
+SuffStat_Woodbury = rstan::sampling(BayesianFactorAnalysis_SuffStat_Woodbury_stan, BFA_SuffStat_Woodbury_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0), 
+times = 10, unit = "seconds"
+)
+
+```
+
+```{r mbm_BFA_stan_n1000_p10_d3_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BFA_mbm_n1000_p10_d3
+
+```
+
+```{r mbm_BFA_stan_final_plot_N, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BFA_mbm_n100_p10_d3_summary <- summary(BFA_mbm_n100_p10_d3)
+
+BFA_mbm_n100_p10_d3_summary[["n"]] <- 100
+BFA_mbm_n100_p10_d3_summary[["p"]] <- 10
+
+BFA_mbm_n500_p10_d3_summary <- summary(BFA_mbm_n500_p10_d3)
+
+BFA_mbm_n500_p10_d3_summary[["n"]] <- 500
+BFA_mbm_n500_p10_d3_summary[["p"]] <- 10
+
+BFA_mbm_n1000_p10_d3_summary <- summary(BFA_mbm_n1000_p10_d3)
+
+BFA_mbm_n1000_p10_d3_summary[["n"]] <- 1000
+BFA_mbm_n1000_p10_d3_summary[["p"]] <- 10
+
+plot_df_summary <- dplyr::bind_rows(BFA_mbm_n100_p10_d3_summary, BFA_mbm_n500_p10_d3_summary, BFA_mbm_n1000_p10_d3_summary)
+
+plot_df_summary["expr"] <- rep(c("vectorised", "sufficient statistics", "sufficient statistics + woodbury decomposition"), 3)
+
+
+BFA_plot_N <- ggplot(plot_df_summary, aes(x = factor(n), y = median, colour = expr)) +
+    geom_crossbar(aes(ymin = min, ymax = max), position = position_dodge(0.5)) + 
+    labs(title = "Factor model: $p = 10$, $d = 3$",
+         x = "$n$",
+         y = "Time (seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+BFA_plot_N
+
+BFA_plot_N_log <- ggplot(plot_df_summary, aes(x = factor(n), y = log(median), colour = expr)) +
+    geom_crossbar(aes(ymin = log(min), ymax = log(max)), position = position_dodge(0.5)) + 
+    labs(title = "Factor model: $p = 10$, $d = 3$",
+         x = "$n$",
+         y = "log-Time (log-seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+BFA_plot_N_log
+
+
+
+
+
+```
+
+Is the speed up a function of needing fewer leapfrog steps or something
+
+## Sufficient Statistics + Woodbury
+
+
+```{r BFA_SuffStat_Woodbury_n1000, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+warmup <- 1000
+iterations <- 5000
+
+BFA_SuffStat_Woodbury_n1000_data <- list(P=P, N=N, Y=Y, D=D)
+
+
+BFA_SuffStat_Woodbury_n1000_sampling  <- rstan::sampling(BayesianFactorAnalysis_SuffStat_Woodbury_stan, BFA_SuffStat_Woodbury_n1000_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123)
+
+BFA_SuffStat_Woodbury_n1000_params <- extract(BFA_SuffStat_Woodbury_n1000_sampling)
+
+BFA_SuffStat_Woodbury_n1000_sampling_params <- rstan::get_sampler_params(BFA_SuffStat_Woodbury_n1000_sampling)
+
+colMeans(BFA_SuffStat_Woodbury_n1000_sampling_params[[1]])
+
+```
+
+
+# Data Simulation 2
+
+```{r data_simulation2, include=TRUE,echo=TRUE, eval = TRUE,  cache=TRUE}
+
+set.seed(42)
+D <- 5
+P <- 20 
+N <- 500
+
+Psi <- diag(rexp(P, 1))
+l1 <- round(rnorm(P, 0, 0.5), 2)
+l2 <- c(0.00, round(rnorm(P-1, 0, 0.5), 2))
+l3 <- c(0.00, 0.00, round(rnorm(P-2, 0, 0.5), 2))
+l4 <- c(0.00, 0.00, 0.00, round(rnorm(P-3, 0, 0.5), 2))
+l5 <- c(0.00, 0.00, 0.00, 0.00, round(rnorm(P-4, 0, 0.5), 2))
+L <- cbind(l1,l2,l3, l4, l5) # the loading matrix
+# Needs to have upper triangle of 0
+
+Theta <- mvrnorm(N, rep(0,D), diag(rep(1,D))) # sample factor scores
+Epsilon <-mvrnorm(N, rep(0,P), Psi) # sample error vector
+Y<-Theta%*%t(L)+Epsilon# generate observable data
+
+
+```
+
+
+
+
+## Vectorised
+
+
+```{r BFA_Vectorised2, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+warmup <- 1000
+iterations <- 5000
+
+BFA_Vectorised_data <- list(P=P, N=N, Y=Y, D=D)
+
+
+BFA_Vectorised_sampling <- rstan::sampling(BayesianFactorAnalysis_Vectorised_stan, BFA_Vectorised_data, iter=warmup+iterations, warmup=warmup, chains = 1, cores = 1, seed = 123 )
+
+BFA_Vectorised_params <- extract(BFA_Vectorised_sampling)
+
+
+```
+
+
+```{r BFA_Simple2_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+apply(BFA_Vectorised_params$L, c(2, 3), mean)
+L
+
+apply(BFA_Vectorised_params$psi, c(2), mean)
+diag(Psi)
+```
+
+## With sufficient Statistics
+
+
+```{r BFA_SuffStat2, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+warmup <- 1000
+iterations <- 5000
+
+BFA_SuffStat_data <- list(P=P, N=N, Y=Y, D=D)
+
+
+BFA_SuffStat_sampling   = rstan::sampling(BayesianFactorAnalysis_SuffStat_stan, BFA_SuffStat_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123)
+
+BFA_SuffStat_params <- extract(BFA_SuffStat_sampling)
+
+
+```
+
+
+```{r BFA_SuffStat2_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+apply(BFA_SuffStat_params$L, c(2, 3), mean)
+apply(BFA_params$L, c(2, 3), mean)
+L
+
+apply(BFA_SuffStat_params$psi, c(2), mean)
+apply(BFA_params$psi, c(2), mean)
+diag(Psi)
+```
+
+## Sufficient Statistics + Woodbury
+
+
+```{r BFA_SuffStat_Woodbury2, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+warmup <- 1000
+iterations <- 5000
+
+BFA_SuffStat_Woodbury_data <- list(P=P, N=N, Y=Y, D=D)
+
+
+BFA_SuffStat_Woodbury_sampling   = rstan::sampling(BayesianFactorAnalysis_SuffStat_Woodbury_stan, BFA_SuffStat_Woodbury_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123)
+
+BFA_SuffStat_Woodbury_params <- extract(BFA_SuffStat_Woodbury_sampling)
+
+
+```
+
+```{r BFA_SuffStat_Woodbury2_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+apply(BFA_SuffStat_Woodbury_params$L, c(2, 3), mean)
+apply(BFA_SuffStat_params$L, c(2, 3), mean)
+apply(BFA_Vectorised_params$L, c(2, 3), mean)
+L
+
+apply(BFA_SuffStat_Woodbury_params$psi, c(2), mean)
+apply(BFA_SuffStat_params$psi, c(2), mean)
+apply(BFA_Vectorised_params$psi, c(2), mean)
+diag(Psi)
+```
+
+## microbench comparison - n500, P20, D5
+
+### Simulating Data
+
+```{r mbm_sim_data_n500_p50_d5, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+set.seed(42)
+D <- 5
+P <- 20 
+N <- 500
+
+Psi <- diag(rexp(P, 1))
+l1 <- round(rnorm(P, 0, 0.5), 2)
+l2 <- c(0.00, round(rnorm(P-1, 0, 0.5), 2))
+l3 <- c(0.00, 0.00, round(rnorm(P-2, 0, 0.5), 2))
+l4 <- c(0.00, 0.00, 0.00, round(rnorm(P-3, 0, 0.5), 2))
+l5 <- c(0.00, 0.00, 0.00, 0.00, round(rnorm(P-4, 0, 0.5), 2))
+L <- cbind(l1,l2,l3, l4, l5) # the loading matrix
+# Needs to have upper triangle of 0
+
+Theta <- mvrnorm(N, rep(0,D), diag(rep(1,D))) # sample factor scores
+Epsilon <-mvrnorm(N, rep(0,P), Psi) # sample error vector
+Y<-Theta%*%t(L)+Epsilon# generate observable data
+
+
+```
+
+
+```{r mbm_BFA_stan_n500_p50_d5, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BFA_Vectorised_data <- list(P=P, N=N, Y=Y, D=D)
+BFA_SuffStat_data <- list(P=P, N=N, Y=Y, D=D)
+BFA_SuffStat_Woodbury_data <- list(P=P, N=N, Y=Y, D=D)
+
+BFA_mbm_n500_p50_d5 <- microbenchmark(
+Vectorised = rstan::sampling(BayesianFactorAnalysis_Vectorised_stan, BFA_Vectorised_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0),
+SuffStat = rstan::sampling(BayesianFactorAnalysis_SuffStat_stan, BFA_SuffStat_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0),
+SuffStat_Woodbury = rstan::sampling(BayesianFactorAnalysis_SuffStat_Woodbury_stan, BFA_SuffStat_Woodbury_data, iter=warmup+iterations, warmup=warmup,  chains = 1, cores = 1, seed = 123, refresh = 0), 
+times = 10, unit = "seconds"
+)
+
+```
+
+```{r mbm_BFA_stan_n500_p50_d5_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BFA_mbm_n500_p50_d5
+
+```
+
+```{r mbm_BFA_stan_final_plot_P, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BFA_mbm_n500_p10_d3_summary <- summary(BFA_mbm_n500_p10_d3)
+
+BFA_mbm_n500_p10_d3_summary[["n"]] <- 500
+BFA_mbm_n500_p10_d3_summary[["p"]] <- 10
+
+BFA_mbm_n500_p50_d5_summary <- summary(BFA_mbm_n500_p50_d5)
+
+BFA_mbm_n500_p50_d5_summary[["n"]] <- 500
+BFA_mbm_n500_p50_d5_summary[["p"]] <- 20
+
+BFA_mbm_n500_p50_d5_summary[["expr"]]
+
+
+plot_df_summary <- dplyr::bind_rows(BFA_mbm_n500_p10_d3_summary, BFA_mbm_n500_p50_d5_summary)
+
+plot_df_summary["expr"] <- rep(c("vectorised", "sufficient statistics", "sufficient statistics + woodbury decomposition"), 2)
+
+
+BFA_plot_P <- ggplot(plot_df_summary, aes(x = factor(p), y = median, colour = expr)) +
+    geom_crossbar(aes(ymin = min, ymax = max), position = position_dodge(0.5)) + 
+    labs(title = "Factor model: $n = 500$",
+         x = "$p$",
+         y = "Time (seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+BFA_plot_P
+
+BFA_plot_P_log <- ggplot(plot_df_summary, aes(x = factor(p), y = log(median), colour = expr)) +
+    geom_crossbar(aes(ymin = log(min), ymax = log(max)), position = position_dodge(0.5)) + 
+    labs(title = "Factor model: $n = 500$",
+         x = "$p$",
+         y = "log-Time (log-seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+BFA_plot_P_log
+
+```
+
+```{r mbm_BFA_stan_final_plot, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+ggarrange(BFA_plot_N_log, BFA_plot_P_log, nrow = 1, ncol = 2, common.legend = TRUE, legend="bottom")
+
+```
+
+```{r mbm_BFA_stan_final_plot_tikz, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE, fig.height = 4.5, fig.width = 10, dev = "tikz"}
+par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+ggarrange(BFA_plot_N_log, BFA_plot_P_log, nrow = 1, ncol = 2, common.legend = TRUE, legend="bottom")
+
+
+```
