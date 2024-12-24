@@ -1,0 +1,691 @@
+---
+title: "Bayesian Linear regression"
+author: "Clemens Pilcher and Jack Jewson"
+date: "18 Nov 2024"
+output: html_document
+---
+
+## Preamble {.tabset}
+
+### Working directory
+
++ Change this to be the directory that the stan files are saved in 
+
+```{r setwd, include=TRUE,echo=TRUE, eval=TRUE,cache=TRUE}
+
+my_dir <- "C:/Users/jjew0003/Documents/BarcelonaProjects/SufficientStatistics/Regression"
+
+
+```
+
+### Packages
+
+Loading the required packages.
+
+```{r packages, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+library(rstan)
+rstan_options(auto_write = TRUE)
+
+library(microbenchmark)
+library(brms)
+
+library(rstanarm)
+
+library(ggplot2)
+library(ggpubr)
+```
+
+
+### stan
+
+```{r stan, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+setwd(my_dir)
+
+#http://discourse.mc-stan.org/t/stan-recompile-to-avoid-r-from-crashing/2631
+BayesianLinearRegression_stan <- rstan::stan_model(file="BayesianLinearRegression.stan")
+BayesianLinearRegression_brms_stan <- rstan::stan_model(file="BayesianLinearRegression_brms.stan")
+BayesianLinearRegression_SuffStat_stan <- rstan::stan_model(file="BayesianLinearRegression_SuffStat.stan")
+
+
+```
+
+## n = 100, p = 10
+
+### Simulating Data
+
+```{r sim_data_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+n <- 100
+p <- 10
+
+# Generate synthetic data
+set.seed(123)  # For reproducibility
+
+# Predictor matrix X
+X <- matrix(rnorm(n * p), n, p)
+
+# True regression coefficients
+beta <- c(1.5, 2, 2.5, rep(0, p - 3))
+
+# Generate response variable Y with noise
+Y <- X[,1] * beta[1] + X[,2] * beta[2] + X[,3] * beta[3] + rnorm(n)
+beta
+
+
+
+```
+
+### BRMS code
+
+```{r brms, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+
+formula <- bf(Y ~ X1 + X2 + X3 + X4 + X5 + X6 + X7 + X8 + X9 + X10 + 0)
+
+# Create the data frame
+data_brms <- data.frame(
+  Y = Y,          # Response variable
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+for (i in 1:p) {
+  col_name <- paste0("X", i)
+  data_brms[[col_name]] <- X[, i]
+}
+
+fit <- brms::brm(formula, data = data_brms, iter = 1, refresh = 0, silent = 0, prior = prior(normal(0, 10), class = b))
+
+
+brms::stancode(fit)
+
+```
+
+### Vectorised stan manual
+
+```{r BayesianLinearRegression_stan_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BayesianLinearRegression_data <- list(N = n, Y = Y, K = p, X = X)
+
+BayesianLinearRegression_sampling <- sampling(object = BayesianLinearRegression_stan, data = BayesianLinearRegression_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, seed = 123
+
+)
+BayesianLinearRegression_params <- extract(BayesianLinearRegression_sampling)
+
+```
+
+
+### BRMS
+
+```{r BayesianLinearRegression_brms_stan_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BayesianLinearRegression_brms_data <- list(N = n, Y = Y, K = p, X = X, prior_only = FALSE)
+
+BayesianLinearRegression_brms_sampling <- sampling(object = BayesianLinearRegression_brms_stan, data = BayesianLinearRegression_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, seed = 123
+
+)
+BayesianLinearRegression_brms_params <- extract(BayesianLinearRegression_brms_sampling)
+
+```
+
+### sufficieint statistics
+
+```{r BayesianLinearRegression_SuffStat_stan_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BayesianLinearRegression_SuffStat_data <- list(N = n, Y = Y, K = p, X = X)
+
+BayesianLinearRegression_SuffStat_sampling <- sampling(object = BayesianLinearRegression_SuffStat_stan, data = BayesianLinearRegression_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, seed = 123
+
+)
+BayesianLinearRegression_SuffStat_params <- extract(BayesianLinearRegression_SuffStat_sampling)
+
+```
+
+### rstanarm
+
+https://cran.r-project.org/web/packages/rstanarm/vignettes/lm.html
+
+```{r BayesianLinearRegression_rstanarm_stan_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+
+BayesianLinearRegression_rstanarm_sampling <-
+  stan_glm(
+    Y ~ X + 0,
+    data = data_rstanarm,
+    family = gaussian(),
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    seed = 123
+  )
+
+BayesianLinearRegression_rstanarm_params <- as.matrix(BayesianLinearRegression_rstanarm_sampling)
+
+```
+
+### Posterior Comparison
+
+```{r BayesianLinearRegression_brms_SuffStat_stan_n100_p10_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+for(j in 1:p){
+  plot(density(BayesianLinearRegression_params$b[,j]), xlab = paste("beta", j), ylab = "Density", lwd = 3)
+  lines(density(BayesianLinearRegression_brms_params$b[,j]), lwd = 3, col = "darkgrey")
+  lines(density(BayesianLinearRegression_SuffStat_params$b[,j]), lwd = 3, col = "brown")
+  lines(density(BayesianLinearRegression_rstanarm_params[,j]), lwd = 3, col = "pink")
+}
+
+
+plot(density(BayesianLinearRegression_params$sigma), xlab = "sigma", ylab = "Density", lwd = 3)
+lines(density(BayesianLinearRegression_brms_params$sigma), lwd = 3, col = "darkgrey")
+lines(density(BayesianLinearRegression_SuffStat_params$sigma), lwd = 3, col = "brown")
+lines(density(BayesianLinearRegression_rstanarm_params[,p+1]), lwd = 3, col = "pink")
+```
+
+```{r BayesianLinearRegression_brms_SuffStat_stan_n100_p10_diag_tikz, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE, fig.height = 3, fig.width = 5, dev = "tikz"}
+#par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+#par(mgp = c(2.15, 1, 0))
+#par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+par(mar = c(4, 4.3, 0.5, 0.5)) # bottom, left, top, right
+par(mgp = c(2.75, 1.05, 0))
+par(cex.lab = 1.875, cex.axis = 1.875, cex.main = 1.875)
+
+library(paletteer)
+greys <- paletteer_d("RColorBrewer::Greys")
+
+for(j in 1:p){
+  plot(density(BayesianLinearRegression_params$b[,j]), xlab = paste0("$\\beta_{", j, "}$"), ylab = "Density", lwd = 4, col = greys[3], main = "")#, main = paste0("Bayesian linear regression $n = 100$ $p = 10$"))
+  lines(density(BayesianLinearRegression_brms_params$b[,j]), lwd = 4, col = greys[9], lty = 2)
+  lines(density(BayesianLinearRegression_SuffStat_params$b[,j]), lwd = 4, col = greys[5], lty = 3)
+  lines(density(BayesianLinearRegression_rstanarm_params[,j]), lwd = 4, col = greys[7], lty = 4)
+    if(j == 1){
+      legend("topleft", c("brms", "rstanarm", "suff-stat", "vect"), col = c(greys[9], greys[7], greys[5], greys[3]), lwd = rep(4, 4), lty = c(2, 4, 3, 1), bty = "n", cex = 1.5)
+  }
+}
+
+
+plot(density(BayesianLinearRegression_params$sigma), xlab = "$\\sigma$", ylab = "Density", lwd = 4, col = greys[3], main = "")#, main = paste0("Bayesian linear regression $n = 100$ $p = 10$"))
+lines(density(BayesianLinearRegression_brms_params$sigma), lwd = 4, col = greys[9], lty = 2)
+lines(density(BayesianLinearRegression_SuffStat_params$sigma), lwd = 4, col = greys[5], lty = 3)
+lines(density(BayesianLinearRegression_rstanarm_params[,p+1]), lwd = 4, col = greys[7], lty = 4)
+```
+
+## microbench comparison - n100, p10
+
+### Simulating Data
+
+```{r mbm_sim_data_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+n <- 100
+p <- 10
+
+# Generate synthetic data
+set.seed(123)  # For reproducibility
+
+# Predictor matrix X
+X <- matrix(rnorm(n * p), n, p)
+
+# True regression coefficients
+beta <- c(1.5, 2, 2.5, rep(0, p - 3))
+
+# Generate response variable Y with noise
+Y <- X[,1] * beta[1] + X[,2] * beta[2] + X[,3] * beta[3] + rnorm(n)
+beta
+
+# Create the data frame
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+
+```
+
+
+```{r mbm_BayesianLinearRegression_stan_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BayesianLinearRegression_data <- list(N = n, Y = Y, K = p, X = X)
+BayesianLinearRegression_brms_data <- list(N = n, Y = Y, K = p, X = X, prior_only = FALSE)
+BayesianLinearRegression_SuffStat_data <- list(N = n, Y = Y, K = p, X = X)
+
+BLR_mbm_n100_p10 <- microbenchmark(
+Vectorised = sampling(object = BayesianLinearRegression_stan, data = BayesianLinearRegression_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0), 
+BRMS = sampling(object = BayesianLinearRegression_brms_stan, data = BayesianLinearRegression_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0), 
+SuffStat = sampling(object = BayesianLinearRegression_SuffStat_stan, data = BayesianLinearRegression_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0),
+rstanarm = stan_glm(
+    Y ~ X + 0,
+    data = data_rstanarm,
+    family = gaussian(),
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    refresh = 0
+  ), times = 25, unit = "seconds"
+)
+
+```
+
+```{r mbm_BayesianLinearRegression_stan_n100_p10_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BLR_mbm_n100_p10
+
+```
+
+## microbench comparison - n1000, p10
+
+### Simulating Data
+
+```{r mbm_sim_data_n1000_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+n <- 1000
+p <- 10
+
+# Generate synthetic data
+set.seed(123)  # For reproducibility
+
+# Predictor matrix X
+X <- matrix(rnorm(n * p), n, p)
+
+# True regression coefficients
+beta <- c(1.5, 2, 2.5, rep(0, p - 3))
+
+# Generate response variable Y with noise
+Y <- X[,1] * beta[1] + X[,2] * beta[2] + X[,3] * beta[3] + rnorm(n)
+beta
+
+# Create the data frame
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+
+```
+
+
+```{r mbm_BayesianLinearRegression_stan_n1000_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BayesianLinearRegression_data <- list(N = n, Y = Y, K = p, X = X)
+BayesianLinearRegression_brms_data <- list(N = n, Y = Y, K = p, X = X, prior_only = FALSE)
+
+BayesianLinearRegression_SuffStat_data <- list(N = n, Y = Y, K = p, X = X)
+
+BLR_mbm_n1000_p10 <- microbenchmark(
+Vectorised = sampling(object = BayesianLinearRegression_stan, data = BayesianLinearRegression_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0), 
+BRMS = sampling(object = BayesianLinearRegression_brms_stan, data = BayesianLinearRegression_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0), 
+SuffStat = sampling(object = BayesianLinearRegression_SuffStat_stan, data = BayesianLinearRegression_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0),
+rstanarm = stan_glm(
+    Y ~ X + 0,
+    data = data_rstanarm,
+    family = gaussian(),
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    seed = 123,
+    refresh = 0
+  ), times = 25, unit = "seconds"
+)
+
+
+```
+
+```{r mbm_BayesianLinearRegression_stan_n1000_p10_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BLR_mbm_n1000_p10
+
+```
+
+## microbench comparison - n10000, p10
+
+### Simulating Data
+
+```{r mbm_sim_data_n10000_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+n <- 10000
+p <- 10
+
+# Generate synthetic data
+set.seed(123)  # For reproducibility
+
+# Predictor matrix X
+X <- matrix(rnorm(n * p), n, p)
+
+# True regression coefficients
+beta <- c(1.5, 2, 2.5, rep(0, p - 3))
+
+# Generate response variable Y with noise
+Y <- X[,1] * beta[1] + X[,2] * beta[2] + X[,3] * beta[3] + rnorm(n)
+beta
+
+# Create the data frame
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+```
+
+
+```{r mbm_BayesianLinearRegression_stan_n10000_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BayesianLinearRegression_data <- list(N = n, Y = Y, K = p, X = X)
+BayesianLinearRegression_brms_data <- list(N = n, Y = Y, K = p, X = X, prior_only = FALSE)
+
+BayesianLinearRegression_SuffStat_data <- list(N = n, Y = Y, K = p, X = X)
+
+BLR_mbm_n10000_p10 <- microbenchmark(
+Vectorised = sampling(object = BayesianLinearRegression_stan, data = BayesianLinearRegression_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0), 
+BRMS = sampling(object = BayesianLinearRegression_brms_stan, data = BayesianLinearRegression_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0), 
+SuffStat = sampling(object = BayesianLinearRegression_SuffStat_stan, data = BayesianLinearRegression_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0),
+rstanarm = stan_glm(
+    Y ~ X + 0,
+    data = data_rstanarm,
+    family = gaussian(),
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    seed = 123,
+    refresh = 0
+  ), times = 25, unit = "seconds"
+)
+
+
+
+```
+
+```{r mbm_BayesianLinearRegression_stan_n10000_p10_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BLR_mbm_n10000_p10
+
+```
+
+```{r mbm_BayesianLinearRegression_stan_final_plot_N, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BLR_mbm_n100_p10_summary <- summary(BLR_mbm_n100_p10)
+
+BLR_mbm_n100_p10_summary[["n"]] <- 100
+BLR_mbm_n100_p10_summary[["p"]] <- 10
+
+BLR_mbm_n1000_p10_summary <- summary(BLR_mbm_n1000_p10)
+
+BLR_mbm_n1000_p10_summary[["n"]] <- 1000
+BLR_mbm_n1000_p10_summary[["p"]] <- 10
+
+BLR_mbm_n10000_p10_summary <- summary(BLR_mbm_n10000_p10)
+
+BLR_mbm_n10000_p10_summary[["n"]] <- 10000
+BLR_mbm_n10000_p10_summary[["p"]] <- 10
+
+plot_df_summary <- dplyr::bind_rows(BLR_mbm_n100_p10_summary, BLR_mbm_n1000_p10_summary, BLR_mbm_n10000_p10_summary)
+
+plot_df_summary["expr"] <- rep(c("vectorised", "brms", "sufficient statistics", "rstanarm"), 3)
+
+
+BLR_plot_N <- ggplot(plot_df_summary, aes(x = factor(n), y = median, colour = expr)) +
+    geom_crossbar(aes(ymin = min, ymax = max), position = position_dodge(0.5)) + 
+    labs(title = "Linear regression: $p = 10$",
+         x = "$n$",
+         y = "Time (seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+BLR_plot_N
+
+BLR_plot_N_log <- ggplot(plot_df_summary, aes(x = factor(n), y = log(median), colour = expr)) +
+    geom_crossbar(aes(ymin = log(min), ymax = log(max)), position = position_dodge(0.5)) + 
+    labs(title = "Linear regression: $p = 10$",
+         x = "$n$",
+         y = "log-Time (log-seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+BLR_plot_N_log
+
+
+```
+
+
+## microbench comparison - n1000, p100
+
+### Simulating Data
+
+```{r mbm_sim_data_n1000_p100, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+n <- 1000
+p <- 100
+
+# Generate synthetic data
+set.seed(123)  # For reproducibility
+
+# Predictor matrix X
+X <- matrix(rnorm(n * p), n, p)
+
+# True regression coefficients
+beta <- c(1.5, 2, 2.5, rep(0, p - 3))
+
+# Generate response variable Y with noise
+Y <- X[,1] * beta[1] + X[,2] * beta[2] + X[,3] * beta[3] + rnorm(n)
+beta
+
+# Create the data frame
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+
+```
+
+
+```{r mbm_BayesianLinearRegression_stan_n1000_p100, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BayesianLinearRegression_data <- list(N = n, Y = Y, K = p, X = X)
+BayesianLinearRegression_brms_data <- list(N = n, Y = Y, K = p, X = X, prior_only = FALSE)
+
+BayesianLinearRegression_SuffStat_data <- list(N = n, Y = Y, K = p, X = X)
+
+BLR_mbm_n1000_p100 <- microbenchmark(
+Vectorised = sampling(object = BayesianLinearRegression_stan, data = BayesianLinearRegression_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0), 
+BRMS = sampling(object = BayesianLinearRegression_brms_stan, data = BayesianLinearRegression_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0), 
+SuffStat = sampling(object = BayesianLinearRegression_SuffStat_stan, data = BayesianLinearRegression_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0),
+rstanarm = stan_glm(
+    Y ~ X + 0,
+    data = data_rstanarm,
+    family = gaussian(),
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    seed = 123,
+    refresh = 0
+  ), times = 25, unit = "seconds"
+)
+
+
+```
+
+```{r mbm_BayesianLinearRegression_stan_n1000_p100_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BLR_mbm_n1000_p100
+
+```
+
+## microbench comparison - n1000, p500
+
+### Simulating Data
+
+```{r mbm_sim_data_n1000_p500, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+n <- 1000
+p <- 500
+
+# Generate synthetic data
+set.seed(123)  # For reproducibility
+
+# Predictor matrix X
+X <- matrix(rnorm(n * p), n, p)
+
+# True regression coefficients
+beta <- c(1.5, 2, 2.5, rep(0, p - 3))
+
+# Generate response variable Y with noise
+Y <- X[,1] * beta[1] + X[,2] * beta[2] + X[,3] * beta[3] + rnorm(n)
+beta
+
+# Create the data frame
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+```
+
+
+```{r mbm_BayesianLinearRegression_stan_n1000_p500, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+BayesianLinearRegression_data <- list(N = n, Y = Y, K = p, X = X)
+BayesianLinearRegression_brms_data <- list(N = n, Y = Y, K = p, X = X, prior_only = FALSE)
+
+BayesianLinearRegression_SuffStat_data <- list(N = n, Y = Y, K = p, X = X)
+
+BLR_mbm_n1000_p500 <- microbenchmark(
+Vectorised = sampling(object = BayesianLinearRegression_stan, data = BayesianLinearRegression_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0), 
+BRMS = sampling(object = BayesianLinearRegression_brms_stan, data = BayesianLinearRegression_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0), 
+SuffStat = sampling(object = BayesianLinearRegression_SuffStat_stan, data = BayesianLinearRegression_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0),
+rstanarm = stan_glm(
+    Y ~ X + 0,
+    data = data_rstanarm,
+    family = gaussian(),
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    seed = 123,
+    refresh = 0
+  ), times = 25, unit = "seconds"
+)
+
+
+```
+
+```{r mbm_BayesianLinearRegression_stan_final_plot_P, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+BLR_mbm_n1000_p100_summary <- summary(BLR_mbm_n1000_p100)
+
+BLR_mbm_n1000_p100_summary[["n"]] <- 1000
+BLR_mbm_n1000_p100_summary[["p"]] <- 100
+
+
+BLR_mbm_n1000_p500_summary <- summary(BLR_mbm_n1000_p500)
+
+BLR_mbm_n1000_p500_summary[["n"]] <- 1000
+BLR_mbm_n1000_p500_summary[["p"]] <- 500
+
+
+plot_df_summary <- dplyr::bind_rows(BLR_mbm_n1000_p10_summary, BLR_mbm_n1000_p100_summary, BLR_mbm_n1000_p500_summary)
+
+plot_df_summary["expr"] <- rep(c("vectorised", "brms", "sufficient statistics", "rstanarm"), 3)
+
+
+BLR_plot_P <- ggplot(plot_df_summary, aes(x = factor(p), y = median, colour = expr)) +
+    geom_crossbar(aes(ymin = min, ymax = max), position = position_dodge(0.5)) + 
+    labs(title = "Linear regression: $n = 1000$",
+         x = "$p$",
+         y = "Time (seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+BLR_plot_P
+
+BLR_plot_P_log <- ggplot(plot_df_summary, aes(x = factor(p), y = log(median), colour = expr)) +
+    geom_crossbar(aes(ymin = log(min), ymax = log(max)), position = position_dodge(0.5)) + 
+    labs(title = "Linear regression: $n = 1000$",
+         x = "$p$",
+         y = "log-Time (log-seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+BLR_plot_P_log
+
+```
+
+```{r mbm_BayesianLinearRegression_stan_final_plot, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+ggarrange(BLR_plot_N_log, BLR_plot_P_log, nrow = 1, ncol = 2, common.legend = TRUE, legend="bottom")
+
+```
+
+```{r mbm_BayesianLinearRegression_stan_final_plot_tikz, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE, fig.height = 4.5, fig.width = 10, dev = "tikz"}
+par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+ggarrange(BLR_plot_N_log, BLR_plot_P_log, nrow = 1, ncol = 2, common.legend = TRUE, legend="bottom")
+
+
+```
