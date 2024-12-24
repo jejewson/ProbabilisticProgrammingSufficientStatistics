@@ -1,0 +1,842 @@
+---
+title: "Bayesian Linear Mixed Effects Models"
+author: "Clemens Pilcher and Jack Jewson"
+date: "20 Nov 2024"
+output: html_document
+---
+
+## Preamble {.tabset}
+
+### Working directory
+
++ Change this to be the directory that the stan files are saved in 
+
+```{r setwd, include=TRUE,echo=TRUE, eval=TRUE,cache=TRUE}
+
+my_dir <- "C:/Users/jjew0003/Documents/BarcelonaProjects/SufficientStatistics/RandomEffects"
+
+
+```
+
+### Packages
+
+Loading the required packages.
+
+```{r packages, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+library(rstan)
+rstan_options(auto_write = TRUE)
+
+library(microbenchmark)
+library(brms)
+
+library(rstanarm)
+
+library(ggplot2)
+library(ggpubr)
+```
+
+
+### stan
+
+```{r stan, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+setwd(my_dir)
+
+#http://discourse.mc-stan.org/t/stan-recompile-to-avoid-r-from-crashing/2631
+LinearMixedEffectsModels_naive_stan <- stan_model(file="LinearMixedEffectsModels_vectorised.stan")
+LinearMixedEffectsModels_brms_stan <- stan_model(file="LinearMixedEffectsModels_brms.stan")
+LinearMixedEffectsModels_SuffStat_stan <- stan_model(file="LinearMixedEffectsModels_SuffStat.stan")
+
+```
+
+## n = 100, p = 10, J = 5
+
+### Simulating Data
+
+```{r sim_data_n100_p5_J5, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Number of observations
+n <- 100
+# Number of predictors
+p <- 5
+# Number of groups
+J <- 5
+
+# Jenerate random predictors
+X <- matrix(rnorm(n * p), n, p)
+
+# Define true coefficients
+beta <- c(1, 2, -1, rep(0, p - 3))  # Only some predictors are non-zero
+
+# Jenerate group indicators
+group <- sample(1:J, n, replace = TRUE)
+# Jenerate group-level effects
+group_intercepts <- rnorm(J, mean = 0, sd = 1)
+random_effects <- group_intercepts[group]
+
+# Jenerate response variable
+Y <- drop(X %*% beta + random_effects + rnorm(n))
+
+
+
+```
+
+### BRMS code
+
+```{r brms, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+
+# Create the data frame
+data_brms <- data.frame(
+  Y = Y,
+  group = group,
+  N = n,
+  P = p
+)
+
+# Add the predictors to the data frame
+for (i in 1:p) {
+  col_name <- paste0("X", i)
+  data_brms[[col_name]] <- X[, i]
+}
+
+# Define the mixed-effects formula
+# Fixed effects for predictors and random intercept for groups
+formula_mixed <- bf(Y ~ X1 + X2 + X3 + X4 + X5 + (1 | group) + 0)
+
+# Fit the mixed-effects model using `brms`
+fit <- brm(formula_mixed, data = data_brms, iter = 1, refresh = 0, silent = 0, prior = prior(normal(0, 10), class = b))
+
+# Display the Stan code for the fitted model
+stancode(fit)
+
+
+```
+
+### Vectorised Implementation
+
+```{r LinearMixedEffectsModels_naive_stan_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+LinearMixedEffectsModels_naive_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+
+LinearMixedEffectsModels_naive_sampling <- sampling(object = LinearMixedEffectsModels_naive_stan, data = LinearMixedEffectsModels_naive_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, seed = 123, control = list(adapt_delta = 0.95)
+
+)
+LinearMixedEffectsModels_naive_params <- extract(LinearMixedEffectsModels_naive_sampling)
+
+```
+
+
+### BRMS
+
+```{r LinearMixedEffectsModels_brms_stan_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+LinearMixedEffectsModels_brms_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group, M_1 = 1, Z_1_1 = rep(1, n), prior_only = FALSE)# Z_1_1 is 1 as this is a random intercept model
+
+LinearMixedEffectsModels_brms_sampling <- sampling(object = LinearMixedEffectsModels_brms_stan, data = LinearMixedEffectsModels_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, seed = 123, control = list(adapt_delta = 0.95)
+
+)
+LinearMixedEffectsModels_brms_params <- extract(LinearMixedEffectsModels_brms_sampling)
+
+LinearMixedEffectsModels_brms_sampling_params <- rstan::get_sampler_params(LinearMixedEffectsModels_brms_sampling)
+
+colMeans(LinearMixedEffectsModels_brms_sampling_params[[1]])
+
+```
+
+### sufficieint statistics
+
+```{r LinearMixedEffectsModels_SuffStat_stan_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+LinearMixedEffectsModels_SuffStat_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+
+LinearMixedEffectsModels_SuffStat_sampling <- sampling(object = LinearMixedEffectsModels_SuffStat_stan, data = LinearMixedEffectsModels_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, seed = 123, control = list(adapt_delta = 0.95)
+
+)
+LinearMixedEffectsModels_SuffStat_params <- extract(LinearMixedEffectsModels_SuffStat_sampling)
+
+
+
+```
+
+### rstanarm
+
+https://mc-stan.org/users/documentation/case-studies/tutorial_rstanarm.html - Section 3
+
+```{r LinearMixedEffectsModels_rstanarm_stan_n100_p10, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  group = group,
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+LinearMixedEffectsModels_rstanarm_sampling <-
+  stan_lmer(
+    Y ~ X + (1 | group) + 0,
+    data = data_rstanarm,
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    adapt_delta = 0.95,
+    seed = 123
+  )
+
+prior_summary(object = LinearMixedEffectsModels_rstanarm_sampling)
+
+LinearMixedEffectsModels_rstanarm_params <- as.matrix(LinearMixedEffectsModels_rstanarm_sampling)
+
+```
+
+### Posterior Comparison
+
+```{r LinearMixedEffectsModels_brms_SuffStat_stan_n100_p10_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+for(j in 1:p){
+  plot(density(LinearMixedEffectsModels_naive_params$b[,j]), xlab = paste("beta", j), ylab = "Density", lwd = 3)
+  lines(density(LinearMixedEffectsModels_brms_params$b[,j]), lwd = 3, col = "darkgrey")
+  lines(density(LinearMixedEffectsModels_SuffStat_params$b[,j]), lwd = 3, col = "pink")
+  lines(density(LinearMixedEffectsModels_rstanarm_params[,j]), lwd = 3, col = "brown")
+}
+
+for(j in 1:J){
+  plot(density(LinearMixedEffectsModels_naive_params$z_1[,j]), xlab = paste("z", j), ylab = "Density", lwd = 3)
+  lines(density(LinearMixedEffectsModels_brms_params$r_1_1[,j]), lwd = 3, col = "darkgrey")
+  lines(density(LinearMixedEffectsModels_SuffStat_params$r_1_1[,j]), lwd = 3, col = "pink")
+  lines(density(LinearMixedEffectsModels_rstanarm_params[,p+j]), lwd = 3, col = "brown")
+}
+
+
+plot(density(LinearMixedEffectsModels_naive_params$sigma), xlab = "sigma", ylab = "Density", lwd = 3)
+lines(density(LinearMixedEffectsModels_brms_params$sigma), lwd = 3, col = "darkgrey")
+lines(density(LinearMixedEffectsModels_brms_SuffStat_params$sigma), lwd = 3, col = "pink")
+lines(density(LinearMixedEffectsModels_rstanarm_params[,p+J+1]), lwd = 3, col = "brown")
+
+
+plot(density(LinearMixedEffectsModels_naive_params$sd_1), xlab = "sd_1", ylab = "Density", lwd = 3)
+lines(density(LinearMixedEffectsModels_brms_params$sd_1), lwd = 3, col = "darkgrey")
+lines(density(LinearMixedEffectsModels_brms_SuffStat_params$sd_1), lwd = 3, col = "pink")
+lines(density(LinearMixedEffectsModels_rstanarm_params[,p+J+2]), lwd = 3, col = "brown")
+```
+
+```{r LinearMixedEffectsModels_brms_SuffStat_stan_n100_p10_diag_tikz, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE, fig.height = 3, fig.width = 5, dev = "tikz"}
+#par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+#par(mgp = c(2.15, 1, 0))
+#par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+par(mar = c(4, 4.3, 0.5, 0.5)) # bottom, left, top, right
+par(mgp = c(2.75, 1.05, 0))
+par(cex.lab = 1.875, cex.axis = 1.875, cex.main = 1.875)
+
+library(paletteer)
+greys <- paletteer_d("RColorBrewer::Jreys")
+
+for(j in 1:p){
+  plot(density(LinearMixedEffectsModels_naive_params$b[,j]), xlab = paste0("$\\beta_{", j, "}$"), ylab = "Density", lwd = 4, col = greys[3], main = "")#, main = paste0("Linear mixed effects model $n = 100$ $p = 5$ $J = 5$"))
+  lines(density(LinearMixedEffectsModels_brms_params$b[,j]), lwd = 4, col = greys[9], lty = 2)
+  lines(density(LinearMixedEffectsModels_SuffStat_params$b[,j]), lwd = 4, col = greys[5], lty = 3)
+  lines(density(LinearMixedEffectsModels_rstanarm_params[,j]), lwd = 4, col = greys[7], lty = 4)
+  if(j == 1){
+    legend("topleft", c("brms", "rstanarm", "suff-stat", "vect"), col = c(greys[9], greys[7], greys[5], greys[3]), lwd = rep(4, 4), lty = c(2, 4, 3, 1), bty = "n", cex = 1.5)
+  }
+}
+
+for(j in 1:J){
+  plot(density(LinearMixedEffectsModels_naive_params$z_1[,j]), xlab = paste0("$u_{", j, "}$"), ylab = "Density", lwd = 4, col = greys[3], main = "")#, main = paste0("Linear mixed effects model $n = 100$ $p = 5$ $J = 5$"))
+  lines(density(LinearMixedEffectsModels_brms_params$r_1_1[,j]), lwd = 4, col = greys[9], lty = 2)
+  lines(density(LinearMixedEffectsModels_SuffStat_params$r_1_1[,j]), lwd = 4, col = greys[5], lty = 3)
+  lines(density(LinearMixedEffectsModels_rstanarm_params[,p+j]), lwd = 4, col = greys[7], lty = 4)
+}
+
+
+plot(density(LinearMixedEffectsModels_naive_params$sigma), xlab = "$\\sigma$", ylab = "Density", lwd = 4, col = greys[3], main = "")#, main = paste0("Linear mixed effects model $n = 100$ $p = 5$ $J = 5$"))
+lines(density(LinearMixedEffectsModels_brms_params$sigma), lwd = 4, col = greys[9], lty = 2)
+lines(density(LinearMixedEffectsModels_SuffStat_params$sigma), lwd = 4, col = greys[5], lty = 3)
+lines(density(LinearMixedEffectsModels_rstanarm_params[,p+J+1]), lwd = 4, col = greys[7], lty = 4)
+
+
+plot(density(LinearMixedEffectsModels_naive_params$sd_1), xlab = "$\\sigma_u$", ylab = "Density", lwd = 4, col = greys[3], main = "")#, main = paste0("Linear mixed effects model $n = 100$ $p = 5$ $J = 5$"))
+lines(density(LinearMixedEffectsModels_brms_params$sd_1), lwd = 4, col = greys[9], lty = 2)
+lines(density(LinearMixedEffectsModels_SuffStat_params$sd_1), lwd = 4, col = greys[7], lty = 3)
+lines(density(LinearMixedEffectsModels_rstanarm_params[,p+J+2]), lwd = 4, col = greys[7], lty = 4)
+```
+
+## microbench comparison - n100, p5, J5
+
+### Simulating Data
+
+```{r mbm_sim_data_n100_p5_J5, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Number of observations
+n <- 100
+# Number of predictors
+p <- 5
+# Number of groups
+J <- 5
+
+# Jenerate random predictors
+X <- matrix(rnorm(n * p), n, p)
+
+# Define true coefficients
+beta <- c(1, 2, -1, rep(0, p - 3))  # Only some predictors are non-zero
+
+# Jenerate group indicators
+group <- sample(1:J, n, replace = TRUE)
+# Jenerate group-level effects
+group_intercepts <- rnorm(J, mean = 0, sd = 1)
+random_effects <- group_intercepts[group]
+
+# Jenerate response variable
+Y <- drop(X %*% beta + random_effects + rnorm(n))
+
+
+# Create the data frame
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  group = group,
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+
+```
+
+
+```{r mbm_LinearMixedEffectsModels_stan_n100_p5_J5, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+LinearMixedEffectsModels_naive_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+LinearMixedEffectsModels_brms_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group, M_1 = 1, Z_1_1 = rep(1, n), prior_only = FALSE)
+LinearMixedEffectsModels_SuffStat_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+
+REM_mbm_n100_p5_J5 <- microbenchmark(
+Vectorised = sampling(object = LinearMixedEffectsModels_naive_stan, data = LinearMixedEffectsModels_naive_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)), 
+BRMS = sampling(object = LinearMixedEffectsModels_brms_stan, data = LinearMixedEffectsModels_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)), 
+SuffStat = sampling(object = LinearMixedEffectsModels_SuffStat_stan, data = LinearMixedEffectsModels_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)),
+rstandarm = LinearMixedEffectsModels_rstanarm_sampling <-
+  stan_lmer(
+    Y ~ X + (1 | group) + 0,
+    data = data_rstanarm,
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    adapt_delta = 0.95,
+    refresh = 0
+  ),
+times = 25, unit = "seconds"
+)
+
+```
+
+```{r mbm_LinearMixedEffectsModels_stan_n100_p5_J5_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+REM_mbm_n100_p5_J5
+
+```
+
+## microbench comparison - n1000, p5_J5
+
+### Simulating Data
+
+```{r mbm_sim_data_n1000_p5_J5, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Number of observations
+n <- 1000
+# Number of predictors
+p <- 5
+# Number of groups
+J <- 5
+
+# Jenerate random predictors
+X <- matrix(rnorm(n * p), n, p)
+
+# Define true coefficients
+beta <- c(1, 2, -1, rep(0, p - 3))  # Only some predictors are non-zero
+
+# Jenerate group indicators
+group <- sample(1:J, n, replace = TRUE)
+# Jenerate group-level effects
+group_intercepts <- rnorm(J, mean = 0, sd = 1)
+random_effects <- group_intercepts[group]
+
+# Jenerate response variable
+Y <- drop(X %*% beta + random_effects + rnorm(n))
+
+
+# Create the data frame
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  group = group,
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+
+```
+
+### BRMS
+
+```{r LinearMixedEffectsModels_brms_stan_n1000_p5_J5, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+LinearMixedEffectsModels_brms_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group, M_1 = 1, Z_1_1 = rep(1, n), prior_only = FALSE)# Z_1_1 is 1 as this is a random intercept model
+
+LinearMixedEffectsModels_brms_sampling <- sampling(object = LinearMixedEffectsModels_brms_stan, data = LinearMixedEffectsModels_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, seed = 123, control = list(adapt_delta = 0.95)
+
+)
+LinearMixedEffectsModels_brms_params <- extract(LinearMixedEffectsModels_brms_sampling)
+
+LinearMixedEffectsModels_brms_sampling_params <- rstan::get_sampler_params(LinearMixedEffectsModels_brms_sampling)
+
+colMeans(LinearMixedEffectsModels_brms_sampling_params[[1]])
+
+```
+
+
+```{r mbm_LinearMixedEffectsModels_stan_n1000_p5_J5, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+LinearMixedEffectsModels_naive_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+LinearMixedEffectsModels_brms_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group, M_1 = 1, Z_1_1 = rep(1, n), prior_only = FALSE)
+LinearMixedEffectsModels_SuffStat_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+
+REM_mbm_n1000_p5_J5 <- microbenchmark(
+Vectorised = sampling(object = LinearMixedEffectsModels_naive_stan, data = LinearMixedEffectsModels_naive_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)), 
+BRMS = sampling(object = LinearMixedEffectsModels_brms_stan, data = LinearMixedEffectsModels_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)), 
+SuffStat = sampling(object = LinearMixedEffectsModels_SuffStat_stan, data = LinearMixedEffectsModels_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)),
+rstandarm = LinearMixedEffectsModels_rstanarm_sampling <-
+  stan_lmer(
+    Y ~ X + (1 | group) + 0,
+    data = data_rstanarm,
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,,
+    adapt_delta = 0.95,
+    refresh = 0
+  ),
+times = 25, unit = "seconds"
+)
+
+
+```
+
+```{r mbm_LinearMixedEffectsModels_stan_n1000_p5_J5_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+REM_mbm_n1000_p5_J5
+
+```
+
+## microbench comparison - n10000, p5_J5
+
+### Simulating Data
+
+```{r mbm_sim_data_n10000_p5_J5, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Number of observations
+n <- 10000
+# Number of predictors
+p <- 5
+# Number of groups
+J <- 5
+
+# Jenerate random predictors
+X <- matrix(rnorm(n * p), n, p)
+
+# Define true coefficients
+beta <- c(1, 2, -1, rep(0, p - 3))  # Only some predictors are non-zero
+
+# Jenerate group indicators
+group <- sample(1:J, n, replace = TRUE)
+# Jenerate group-level effects
+group_intercepts <- rnorm(J, mean = 0, sd = 1)
+random_effects <- group_intercepts[group]
+
+# Jenerate response variable
+Y <- drop(X %*% beta + random_effects + rnorm(n))
+
+# Create the data frame
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  group = group,
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+
+```
+
+
+```{r mbm_LinearMixedEffectsModels_stan_n10000_p5_J5, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+LinearMixedEffectsModels_naive_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+LinearMixedEffectsModels_brms_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group, M_1 = 1, Z_1_1 = rep(1, n), prior_only = FALSE)
+LinearMixedEffectsModels_SuffStat_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+
+REM_mbm_n10000_p5_J5 <- microbenchmark(
+Vectorised = sampling(object = LinearMixedEffectsModels_naive_stan, data = LinearMixedEffectsModels_naive_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)), 
+BRMS = sampling(object = LinearMixedEffectsModels_brms_stan, data = LinearMixedEffectsModels_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)), 
+SuffStat = sampling(object = LinearMixedEffectsModels_SuffStat_stan, data = LinearMixedEffectsModels_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)),
+rstandarm = LinearMixedEffectsModels_rstanarm_sampling <-
+  stan_lmer(
+    Y ~ X + (1 | group) + 0,
+    data = data_rstanarm,
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    adapt_delta = 0.95,
+    refresh = 0
+  ),
+times = 25, unit = "seconds"
+)
+
+
+
+```
+
+```{r mbm_LinearMixedEffectsModels_stan_n10000_p5_J5_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+REM_mbm_n10000_p5_J5
+
+```
+
+```{r mbm_LinearMixedEffectsModels_stan_final_plot_N, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+REM_mbm_n100_p5_J5_summary <- summary(REM_mbm_n100_p5_J5)
+
+REM_mbm_n100_p5_J5_summary[["n"]] <- 100
+REM_mbm_n100_p5_J5_summary[["J"]] <- 5
+
+REM_mbm_n1000_p5_J5_summary <- summary(REM_mbm_n1000_p5_J5)
+
+REM_mbm_n1000_p5_J5_summary[["n"]] <- 1000
+REM_mbm_n1000_p5_J5_summary[["J"]] <- 5
+
+REM_mbm_n10000_p5_J5_summary <- summary(REM_mbm_n10000_p5_J5)
+
+REM_mbm_n10000_p5_J5_summary[["n"]] <- 10000
+REM_mbm_n10000_p5_J5_summary[["J"]] <- 5
+
+plot_df_summary <- dplyr::bind_rows(REM_mbm_n100_p5_J5_summary, REM_mbm_n1000_p5_J5_summary, REM_mbm_n10000_p5_J5_summary)
+
+plot_df_summary["expr"] <- rep(c("vectorised", "brms", "sufficient statistics", "rstanarm"), 3)
+
+
+REM_plot_N <- ggplot(plot_df_summary, aes(x = factor(n), y = median, colour = expr)) +
+    geom_crossbar(aes(ymin = min, ymax = max), position = position_dodge(0.5)) + 
+    labs(title = "Linear mixed effects model: $p = 5$, $J = 5$",
+         x = "$n$",
+         y = "Time (seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+REM_plot_N
+
+REM_plot_N_log <- ggplot(plot_df_summary, aes(x = factor(n), y = log(median), colour = expr)) +
+    geom_crossbar(aes(ymin = log(min), ymax = log(max)), position = position_dodge(0.5)) + 
+    labs(title = "Linear mixed effects model: $p = 5$, $J = 5$",
+         x = "$n$",
+         y = "log-Time (log-seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+REM_plot_N_log
+
+
+
+```
+
+
+## microbench comparison - n1000, p5 J50
+
+### Simulating Data
+
+```{r mbm_sim_data_n1000_p5_J50, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Number of observations
+n <- 1000
+# Number of predictors
+p <- 5
+# Number of groups
+J <- 50
+
+# Jenerate random predictors
+X <- matrix(rnorm(n * p), n, p)
+
+# Define true coefficients
+beta <- c(1, 2, -1, rep(0, p - 3))  # Only some predictors are non-zero
+
+# Jenerate group indicators
+group <- sample(1:J, n, replace = TRUE)
+# Jenerate group-level effects
+group_intercepts <- rnorm(J, mean = 0, sd = 1)
+random_effects <- group_intercepts[group]
+
+# Jenerate response variable
+Y <- drop(X %*% beta + random_effects + rnorm(n))
+
+# Create the data frame
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  group = group,
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+```
+
+### BRMS
+
+```{r LinearMixedEffectsModels_brms_stan_n1000_p5_J50, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+LinearMixedEffectsModels_brms_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group, M_1 = 1, Z_1_1 = rep(1, n), prior_only = FALSE)# Z_1_1 is 1 as this is a random intercept model
+
+LinearMixedEffectsModels_brms_sampling <- sampling(object = LinearMixedEffectsModels_brms_stan, data = LinearMixedEffectsModels_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, seed = 123, control = list(adapt_delta = 0.95)
+
+)
+LinearMixedEffectsModels_brms_params <- extract(LinearMixedEffectsModels_brms_sampling)
+
+LinearMixedEffectsModels_brms_sampling_params <- rstan::get_sampler_params(LinearMixedEffectsModels_brms_sampling)
+
+colMeans(LinearMixedEffectsModels_brms_sampling_params[[1]])
+
+```
+
+
+```{r mbm_LinearMixedEffectsModels_stan_n1000_p5_J50, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+LinearMixedEffectsModels_naive_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+LinearMixedEffectsModels_brms_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group, M_1 = 1, Z_1_1 = rep(1, n), prior_only = FALSE)
+LinearMixedEffectsModels_SuffStat_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+
+REM_mbm_n1000_p5_J50 <- microbenchmark(
+Vectorised = sampling(object = LinearMixedEffectsModels_naive_stan, data = LinearMixedEffectsModels_naive_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)), 
+BRMS = sampling(object = LinearMixedEffectsModels_brms_stan, data = LinearMixedEffectsModels_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)), 
+SuffStat = sampling(object = LinearMixedEffectsModels_SuffStat_stan, data = LinearMixedEffectsModels_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)),
+rstandarm = LinearMixedEffectsModels_rstanarm_sampling <-
+  stan_lmer(
+    Y ~ X + (1 | group) + 0,
+    data = data_rstanarm,
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    adapt_delta = 0.95,
+    refresh = 0
+  ),
+times = 25, unit = "seconds"
+)
+
+
+```
+
+```{r mbm_LinearMixedEffectsModels_stan_n1000_p5_J50_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+REM_mbm_n1000_p5_J50
+
+```
+
+## microbench comparison - n1000, p5 J250
+
+### Simulating Data
+
+```{r mbm_sim_data_n1000_p5_J250, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Number of observations
+n <- 1000
+# Number of predictors
+p <- 5
+# Number of groups
+J <- 250
+
+# Jenerate random predictors
+X <- matrix(rnorm(n * p), n, p)
+
+# Define true coefficients
+beta <- c(1, 2, -1, rep(0, p - 3))  # Only some predictors are non-zero
+
+# Jenerate group indicators
+group <- sample(1:J, n, replace = TRUE)
+# Jenerate group-level effects
+group_intercepts <- rnorm(J, mean = 0, sd = 1)
+random_effects <- group_intercepts[group]
+
+# Jenerate response variable
+Y <- drop(X %*% beta + random_effects + rnorm(n))
+
+# Create the data frame
+data_rstanarm <- data.frame(
+  Y = Y,          # Response variable
+  group = group,
+  X = X,
+  N = n,          # Number of observations
+  P = p           # Number of predictors
+)
+
+```
+
+
+```{r mbm_LinearMixedEffectsModels_stan_n1000_p5_J250, include=TRUE, echo=TRUE, eval=TRUE, cache=TRUE}
+
+iterations <- 5000
+warmup <- 1000
+
+LinearMixedEffectsModels_naive_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+LinearMixedEffectsModels_brms_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group, M_1 = 1, Z_1_1 = rep(1, n), prior_only = FALSE)
+LinearMixedEffectsModels_SuffStat_data <- list(N = n, Y = Y, K = p, X = X, N_1 = J, J_1 = group)
+
+REM_mbm_n1000_p5_J250 <- microbenchmark(
+Vectorised = sampling(object = LinearMixedEffectsModels_naive_stan, data = LinearMixedEffectsModels_naive_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)), 
+BRMS = sampling(object = LinearMixedEffectsModels_brms_stan, data = LinearMixedEffectsModels_brms_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)), 
+SuffStat = sampling(object = LinearMixedEffectsModels_SuffStat_stan, data = LinearMixedEffectsModels_SuffStat_data, iter = iterations + warmup, warmup = warmup, chains = 1, cores = 1, refresh = 0, control = list(adapt_delta = 0.95)),
+rstandarm = LinearMixedEffectsModels_rstanarm_sampling <-
+  stan_lmer(
+    Y ~ X + (1 | group) + 0,
+    data = data_rstanarm,
+    prior = normal(0, 10),
+    prior_aux = student_t(3, 0, 3.7),
+    iter = iterations + warmup, 
+    warmup = warmup,
+    chains = 1,
+    cores = 1,
+    adapt_delta = 0.95,
+    refresh = 0
+  ),
+times = 25, unit = "seconds"
+)
+
+
+```
+
+```{r mbm_LinearMixedEffectsModels_stan_n1000_p5_J250_diag, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+REM_mbm_n1000_p5_J250
+
+```
+
+```{r mbm_LinearMixedEffectsModels_stan_final_plot_P, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+REM_mbm_n1000_p5_J5_summary <- summary(REM_mbm_n1000_p5_J5)
+
+REM_mbm_n1000_p5_J5_summary[["n"]] <- 1000
+REM_mbm_n1000_p5_J5_summary[["J"]] <- 5
+
+REM_mbm_n1000_p5_J50_summary <- summary(REM_mbm_n1000_p5_J50)
+
+REM_mbm_n1000_p5_J50_summary[["n"]] <- 1000
+REM_mbm_n1000_p5_J50_summary[["J"]] <- 50
+
+REM_mbm_n1000_p5_J250_summary <- summary(REM_mbm_n1000_p5_J250)
+
+REM_mbm_n1000_p5_J250_summary[["n"]] <- 1000
+REM_mbm_n1000_p5_J250_summary[["J"]] <- 250
+
+plot_df_summary <- dplyr::bind_rows(REM_mbm_n1000_p5_J5_summary, REM_mbm_n1000_p5_J50_summary, REM_mbm_n1000_p5_J250_summary)
+
+plot_df_summary["expr"] <- rep(c("vectorised", "brms", "sufficient statistics", "rstanarm"), 3)
+
+
+REM_plot_P <- ggplot(plot_df_summary, aes(x = factor(J), y = median, colour = expr)) +
+    geom_crossbar(aes(ymin = min, ymax = max), position = position_dodge(0.5)) + 
+    labs(title = "Linear mixed effects model: $n = 1000$, $p = 5$",
+         x = "$J$",
+         y = "Time (seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+REM_plot_P
+
+REM_plot_P_log <- ggplot(plot_df_summary, aes(x = factor(J), y = log(median), colour = expr)) +
+    geom_crossbar(aes(ymin = log(min), ymax = log(max)), position = position_dodge(0.5)) + 
+    labs(title = "Linear mixed effects model: $n = 1000$, $p = 5$",
+         x = "$J$",
+         y = "log-Time (log-seconds)") +
+    theme_minimal() +
+    scale_color_brewer("Method", palette = "Set1") +
+    theme(legend.position = "bottom")
+
+REM_plot_P_log
+
+
+
+```
+
+```{r mbm_REM_stan_final_plot, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE}
+
+ggarrange(REM_plot_N_log, REM_plot_P_log, nrow = 1, ncol = 2, common.legend = TRUE, legend="bottom")
+
+```
+
+```{r mbm_REM_stan_final_plot_tikz, include=TRUE, echo=TRUE, eval=TRUE, cache=FALSE, fig.height = 4.5, fig.width = 10, dev = "tikz"}
+par(mar = c(3.5, 3.8, 1.5, 1.1)) # bottom, left, top, right
+par(mgp = c(2.15, 1, 0))
+par(cex.lab = 1.25, cex.axis = 1.25, cex.main = 1.25)
+
+ggarrange(REM_plot_N_log, REM_plot_P_log, nrow = 1, ncol = 2, common.legend = TRUE, legend="bottom")
+
+
+```
