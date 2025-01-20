@@ -8,10 +8,10 @@ data {
 
 transformed data {
   //vector[K] means_X;  // column means of X before centering
-  real Syy;
+  //real Syy;
   row_vector[K] Syx;
 
-  Syy = sum(lgamma(Y + 1));
+  //Syy = sum(lgamma(Y + 1));
   Syx = Y'*X;
 }
 
@@ -26,7 +26,8 @@ model {
   // Priors:
   target += normal_lpdf(b | 0, 2);
   // Likelihood:
-  target += Syx*b - Syy - sum(exp(X*b));
+  //target += Syx*b - Syy - sum(exp(X*b));
+  target += Syx*b - sum(exp(X*b));
 }
 
 
